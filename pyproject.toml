@@ -38,7 +38,7 @@ dev = [
 requires = [
     "setuptools>=77.0.0",
     "wheel",
-    "cython~=3.0",
+    "cython>=3.3,<4",
 ]
 backend-path = ["custom_build_backend"]
 build-backend = "custom_build_meta"

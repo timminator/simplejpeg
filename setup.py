@@ -14,6 +14,7 @@ from setuptools import setup
 from setuptools import find_packages
 from setuptools import Extension
 from setuptools.command.build_ext import build_ext
+from Cython.Build import cythonize
 
 
 # fall back to system cmake if cmake package is not installed
@@ -22,16 +23,6 @@ try:
     CMAKE_PATH = pt.join(CMAKE_BIN_DIR, 'cmake')
 except ImportError:
     CMAKE_PATH = 'cmake'
-
-
-# don't require Cython for building
-try:
-    from Cython.Build import cythonize
-    HAVE_CYTHON = True
-except ImportError:
-    def cythonize(*_, **__):
-        pass
-    HAVE_CYTHON = False
 
 
 PACKAGE_DIR = pt.abspath(pt.dirname(__file__))
@@ -54,6 +45,12 @@ JPEG_URL = f'https://github.com/libjpeg-turbo/libjpeg-turbo/releases/download/{J
 JPEG_HASH = os.environ.get('SIMPLEJPEG_JPEG_HASH', '8f0012234b464ce50890c490f18194f913a7b1f4e6a03d6644179fa0f867d0cf')
 SKIP_BUILD_NAME = 'skip_build'
 DYNAMIC_LINKING = bool(os.environ.get("SIMPLEJPEG_DYNAMIC_LINKING", ""))
+
+# Cython's typed memoryviews require Python 3.11+ in Limited API mode.
+LIMITED_API = (
+    sys.implementation.name == 'cpython'
+    and sys.version_info >= (3, 11)
+)
 
 
 def verify_file(path, reference_digest, read_size=128*1024):
@@ -212,12 +209,8 @@ def make_jpeg_module():
             # libjpeg-turbo code used to reside at the toplevel of the tree
             pt.join(JPEG_DIR),
         ])
-    cython_files = [pt.join('simplejpeg', '_jpeg.pyx')]
-    for cython_file in cython_files:
-        if pt.exists(cython_file):
-            cythonize(cython_file, force=True)
     sources = [
-        pt.join('simplejpeg', '_jpeg.c'),
+        pt.join('simplejpeg', '_jpeg.pyx'),
         pt.join('simplejpeg', '_color.c')
     ]
     extra_link_args = []
@@ -232,7 +225,8 @@ def make_jpeg_module():
         extra_compile_args.extend([
             '-flto',  # enable LTO
         ])
-    return Extension(
+
+    extension = Extension(
         'simplejpeg._jpeg',
         sources,
         language='C',
@@ -241,7 +235,10 @@ def make_jpeg_module():
         extra_objects=static_libs,
         extra_link_args=extra_link_args,
         extra_compile_args=extra_compile_args,
+        define_macros=[('Py_LIMITED_API', '0x030B0000')] if LIMITED_API else [],
+        py_limited_api=LIMITED_API,
     )
+    return cythonize(extension, force=True)[0]
 
 
 # define extensions
@@ -324,6 +321,10 @@ if not DYNAMIC_LINKING:
     ])
 
 
+setup_kwargs = {}
+if LIMITED_API:
+    setup_kwargs['options'] = {'bdist_wheel': {'py_limited_api': 'cp311'}}
+
 with ConcatFiles(*LICENSE_FILES):
     setup(
         name='simplejpeg',
@@ -334,4 +335,5 @@ with ConcatFiles(*LICENSE_FILES):
         ext_modules=ext_modules,
         cmdclass={'build_ext': cmake_build_ext},
         zip_safe=False,
+        **setup_kwargs,
     )
